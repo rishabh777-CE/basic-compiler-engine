@@ -10,7 +10,7 @@ app.use(bodyParser.json());
 // Docker setup
 
 
-const docker = new Docker({socketPath: '/home/rishabh/.docker/desktop/docker.sock'});
+const docker = new Docker({socketPath: '/home/sarvjot/.docker/desktop/docker.sock'});
 
 // POST /compile endpoint
 app.post('/compile', async (req, res) => {
@@ -67,88 +67,66 @@ await copyEntrypointToContainer(containerId);
 //getting code input and expected output from the request body
 
 
-async function writeFilesToContainer(containerId, code, input, output) {
-  // Path to your local temporary files
-  const tempDir = './';
+	async function writeFilesToContainer(containerId, code, input, output) {
+		// Path to your local temporary files
+		const tempDir = './';
 
-  // Create temporary files for code, input, and output
-  fs.writeFileSync(path.join(tempDir, 'main.cpp'), code);
-  fs.writeFileSync(path.join(tempDir, 'input.txt'), input);
-  fs.writeFileSync(path.join(tempDir, 'expected_output.txt'), output);
+		// Create temporary files for code, input, and output
+		fs.writeFileSync(path.join(tempDir, 'main.cpp'), code);
+		fs.writeFileSync(path.join(tempDir, 'input.txt'), input);
+		fs.writeFileSync(path.join(tempDir, 'expected_output.txt'), output);
 
-  const container = docker.getContainer(containerId);
+		const container = docker.getContainer(containerId);
 
-  // Create a tar stream containing the files
-  const tarStream = require('tar-fs').pack(tempDir, {
-    entries: ['main.cpp', 'input.txt', 'expected_output.txt'],
-    map: function(header) {
-      // Rename files to /app directory inside the container
-      header.name = path.basename(header.name);
-      return header;
-    }
-  });
+		// Create a tar stream containing the files
+		const tarStream = require('tar-fs').pack(tempDir, {
+			entries: ['main.cpp', 'input.txt', 'expected_output.txt'],
+			map: function(header) {
+				// Rename files to /app directory inside the container
+				header.name = path.basename(header.name);
+				return header;
+			}
+		});
 
-  // Copy the tar stream to the container's /app directory
-  await container.putArchive(tarStream, { path: '/' });
+		// Copy the tar stream to the container's /app directory
+		await container.putArchive(tarStream, { path: '/' });
 
-  fs.unlinkSync(path.join(tempDir, 'main.cpp'));
-  fs.unlinkSync(path.join(tempDir, 'input.txt'));
-  fs.unlinkSync(path.join(tempDir, 'expected_output.txt'));
-  console.log('Files copied to the container.');
-}
+		fs.unlinkSync(path.join(tempDir, 'main.cpp'));
+		fs.unlinkSync(path.join(tempDir, 'input.txt'));
+		fs.unlinkSync(path.join(tempDir, 'expected_output.txt'));
+		console.log('Files copied to the container.');
+	}
 
-  // Start the container
-  // Start the container
+	writeFilesToContainer(containerId, code, input, expected_output);
+	const exec = await container.exec({
+		Cmd: [
+			'/bin/sh',
+			'-c',
+			'chmod +x /app/entrypoint.sh && /app/entrypoint.sh'
+		],
+		AttachStdout: true,
+		AttachStderr: true,
+	});
 
+	// Start the exec instance and get the output stream
+	const stream = await exec.start({
+		hijack: true,
+		stdin: true,
+	});
 
-// Wait for the container to start up
-// await new Promise(resolve => setTimeout(resolve, 5000));
+	let response = '';
+	stream.on('data', (chunk) => {
+		response += chunk.toString();
+	});
 
-// Execute the entrypoint script in the container
+	// Wait for the exec instance to finish
+	stream.on('end', async () => {
+		// Get the exit code
+		const { ExitCode } = await exec.inspect();
 
-
-// const tarStream = tar.pack('./', {
-//   entries: ['entrypoint.sh'] // Only include the entrypoint.sh file in the tar archive
-// });
-
-// // Copy the tar archive into the container
-// await new Promise((resolve, reject) => {
-//   container.putArchive(tarStream, { path: '/app' }, (err) => {
-//     if (err) {
-//       reject(err);
-//     } else {
-//       resolve();
-//     }
-//   });
-// });
-writeFilesToContainer(containerId, code, input, expected_output);
-const exec = await container.exec({
-  Cmd: [
-    '/bin/sh',
-    '-c',
-    'chmod +x /app/entrypoint.sh && /app/entrypoint.sh'
-  ],
-  AttachStdout: true,
-  AttachStderr: true,
-});
-// Rest of your code...
-
-  const stream = await exec.start();
-
-  let result = '';
-  stream.on('data', chunk => {
-    result += chunk.toString('utf8');
-  });
-
-  stream.on('end', async () => {
-    // Remove the container
-  
-    // cant remove a running container
-    // await container.remove();
-
-    // Send the verdict as the response
-    res.json({ verdict: result.trim() });
-  });
+		// Send the response
+		res.json({ response, ExitCode });
+	})
 });
 
 // Start the Express server
